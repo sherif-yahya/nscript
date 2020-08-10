@@ -1,0 +1,129 @@
+var config = {
+};
+var current_mode = 'normal';
+
+var lastBet = baseBet*5;
+
+var lostLast = false;
+
+var gamesWaitedForChaser = 0;
+
+var waitingCrash = 0.0;
+
+var inReserve = 0;
+
+var reserveStartBalanceSatoshi  = engine.getBalance();//In satoshi
+
+var startedChasingAmountSatoshi = 0;//In Satoshi
+
+engine.on('game_starting', function(info) {
+    if(info.time_till_start == 5000){
+      runStart();
+    }
+});
+
+engine.on('game_crash', function(data) {
+    var crash = data.game_crash;
+    var actualCrash = parseFloat(crash/100);
+    console.log('The game crashed at ' + actualCrash + ' while we were betting ' + lastBet + ' hoping for ' + waitingCrash);
+    if(waitingCrash < actualCrash){
+      console.log('We won');
+      lostLast = false;
+    }else{
+      lostLast = true;
+      console.log('We did not win');
+    }
+    //Reserve feature check
+    var currentProfit = engine.getBalance()-reserveStartBalanceSatoshi;
+    if(reserveFeature){
+      if(currentProfit >= reserveAmountSatoshi){
+        inReserve = inReserve+currentProfit;
+        console.log('Put current profit in reserve');
+        console.log('Reserve now has: ' + inReserve);
+        resetPlaying();
+      }
+    }
+    if(lostLast == false){
+      if(lastBet > returnToBaseBetOnWinOverX){
+        console.log('Restored bet due to winning over ' + returnToBaseBetOnWinOverX);
+        lastBet = baseBet;
+      }
+    }
+    if(actualCrash > chasingCashOut){
+      gamesWaitedForChaser = 0;
+      if(current_mode == 'chaser'){
+        console.log("Reverting from chaser to normal");
+        current_mode = 'normal';
+        lastBet = baseBet;
+      }
+    }else{
+      if(current_mode == 'normal'){
+        if(gamesWaitedForChaser == chaserAfterXGames){
+          console.log("Switching to chaser");
+          startedChasingAmountSatoshi = engine.getBalance();
+          //switch to chaser
+          current_mode = 'chaser';
+          gamesWaitedForChaser = 0;
+        }else{
+          gamesWaitedForChaser++;
+        }
+      }
+    }
+    console.log("So far it has been " + gamesWaitedForChaser + " games without " + chasingCashOut + "x");
+});
+
+function resetPlaying(){
+  lastBet = baseBet*5;
+  current_mode = 'normal';
+  lostLase = false;
+  gamesWaitedForChaser = 0;
+  waitingCrash = 0.0;
+}
+
+function runStart(){
+  if(current_mode == 'normal'){
+    if(betInNormalMode){
+      if(lostLast){
+        var newBet = Math.round(fixBet(lastBet*normalModeLostMultiply));
+        console.log("betting " + newBet);
+        waitingCrash = crashOnNormalMode;
+        bet(Math.round(newBet*100), Math.round(waitingCrash*100));
+        lastBet = newBet;
+      }else{
+        var newBet = Math.round(fixBet(lastBet*normalModeWinMultiply));
+        console.log("betting " + newBet);
+        waitingCrash = crashOnNormalMode;
+        bet(Math.round(newBet*100), Math.round(waitingCrash*100));
+        lastBet = newBet;
+      }
+    }
+  }else if(current_mode == 'chaser'){
+    var newBet = Math.round(fixBet(lastBet*chaserMultiplyOnLose));
+    console.log("chaser betting " + newBet);
+    var lostChasingSatoshi = startedChasingAmountSatoshi-engine.getBalance();
+    if(lostChasingSatoshi >= Math.round(lostAmountChasing*100)){
+      waitingCrash = losingChasingCash;//Safety
+    }else{
+      waitingCrash = chasingCashOut;
+    }
+    bet(Math.round(newBet*100), Math.round(waitingCrash*100));
+    lastBet = newBet;
+  }
+  console.log('Cash out: ' + chasingCashOut);
+}
+
+function bet(bet, crash){
+  if(reserveFeature){
+    var currentBalanceSatoshi = engine.getBalance();
+    var balanceAfterBet = (currentBalanceSatoshi-bet);
+    if(balanceAfterBet < inReserve){
+      throw new Error("We lost the money");
+      return;
+    }
+  }
+  engine.placeBet(bet, crash, false);
+}
+function fixBet(bet){
+  return (Math.round(bet * 100) / 100);
+}
+
